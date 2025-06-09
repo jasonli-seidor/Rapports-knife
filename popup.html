@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Jira Worklog Reporter</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        width: 300px;
+        padding: 10px;
+      }
+      .date-range {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .date-input {
+        display: flex;
+        flex-direction: column;
+      }
+      button {
+        width: 100%;
+        padding: 8px;
+        cursor: pointer;
+      }
+      #status {
+        margin-top: 10px;
+        font-style: italic;
+      }
+      .modal-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.6);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      .modal-content {
+        background: white;
+        padding: 15px;
+        border-radius: 5px;
+        width: 90%;
+        text-align: left;
+      }
+      .modal-content h4 {
+        margin-top: 0;
+      }
+      .modal-actions {
+        margin-top: 15px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      #subProjectChoices div {
+        margin-bottom: 5px;
+      }
+      #subProjectChoices label {
+        margin-left: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h3>Jira Worklogs</h3>
+    <div class="date-range">
+      <div class="date-input">
+        <label for="startDate">Start Date:</label>
+        <input type="date" id="startDate" />
+      </div>
+      <div class="date-input">
+        <label for="endDate">End Date:</label>
+        <input type="date" id="endDate" />
+      </div>
+    </div>
+
+    <div>
+      <label for="devToolsToggle">Show Dev Tools</label>
+      <input type="checkbox" id="devToolsToggle" />
+    </div>
+
+    <div id="devTools" style="display: none">
+      <button id="getWorklogs">Get Worklogs</button>
+      <button id="getUserProfile" style="margin-top: 10px">
+        Get User Profile
+      </button>
+      <button id="getProjects" style="margin-top: 10px">Get Projects</button>
+    </div>
+    <button id="syncWorklogs" style="margin-top: 10px; font-weight: bold">
+      Sync to Intranet
+    </button>
+    <div id="status"></div>
+
+    <div id="subProjectModal" class="modal-overlay" style="display: none">
+      <div class="modal-content">
+        <h4 id="modalTitle">Select Sub-Project</h4>
+        <p>Multiple sub-projects match. Please choose one:</p>
+        <div
+          id="subProjectChoices"
+          style="max-height: 150px; overflow-y: auto"
+        ></div>
+        <div class="modal-actions">
+          <button id="confirmSubProject">Confirm</button>
+          <button id="cancelSubProject">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
