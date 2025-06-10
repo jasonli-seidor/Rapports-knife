@@ -4,61 +4,156 @@
     <title>Jira Worklog Reporter</title>
     <style>
       body {
-        font-family: sans-serif;
-        width: 300px;
-        padding: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        width: 350px;
+        padding: 15px;
+        background: linear-gradient(to bottom right, #1f2937, #37475a);
+        color: #f3f4f6;
+        box-sizing: border-box;
+        font-size: 0.9em;
+      }
+      h3 {
+        text-align: center;
+        margin-top: 0;
+        margin-bottom: 15px;
+        color: #e5e7eb;
+        font-weight: 500;
       }
       .date-range {
         display: flex;
         justify-content: space-between;
-        margin-bottom: 10px;
+        margin-bottom: 15px;
+        gap: 10px;
       }
       .date-input {
         display: flex;
         flex-direction: column;
+        flex: 1;
+      }
+      label {
+        margin-bottom: 5px;
+        font-size: 0.85em;
+        color: #d1d5db;
+      }
+      input[type="date"] {
+        background-color: #374151;
+        color: #f3f4f6;
+        border: 1px solid #4b5563;
+        padding: 8px;
+        border-radius: 4px;
+        font-family: inherit;
+        color-scheme: dark;
       }
       button {
         width: 100%;
-        padding: 8px;
+        padding: 10px;
         cursor: pointer;
+        border: none;
+        border-radius: 5px;
+        font-weight: bold;
+        color: white;
+        background: linear-gradient(to right, #3b82f6, #60a5fa);
+        transition: all 0.2s ease-in-out;
+        margin-top: 10px;
+      }
+      button:hover {
+        opacity: 0.9;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      }
+      button:active {
+        transform: translateY(0);
+        box-shadow: none;
+      }
+      button:disabled {
+        background: #4b5563;
+        cursor: not-allowed;
+        opacity: 0.6;
+        transform: none;
+        box-shadow: none;
       }
       #status {
-        margin-top: 10px;
+        margin-top: 15px;
         font-style: italic;
+        color: #9ca3af;
+        word-wrap: break-word;
+        text-align: center;
       }
+
+      /* Dev Tools Toggle */
+      .dev-tools-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 15px;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 8px;
+        border-radius: 4px;
+      }
+
+      /* Modal Styling */
       .modal-overlay {
-        position: absolute;
+        position: fixed; /* Use fixed to cover the whole viewport */
         top: 0;
         left: 0;
         right: 0;
         bottom: 0;
-        background-color: rgba(0, 0, 0, 0.6);
+        background-color: rgba(0, 0, 0, 0.7);
         display: flex;
         justify-content: center;
         align-items: center;
         z-index: 1000;
       }
       .modal-content {
-        background: white;
-        padding: 15px;
-        border-radius: 5px;
+        background: #1f2937;
+        padding: 20px;
+        border-radius: 8px;
         width: 90%;
         text-align: left;
+        border: 1px solid #4b5563;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
       }
       .modal-content h4 {
         margin-top: 0;
+        color: #e5e7eb;
+        border-bottom: 1px solid #4b5563;
+        padding-bottom: 10px;
+        margin-bottom: 15px;
       }
       .modal-actions {
-        margin-top: 15px;
+        margin-top: 20px;
         display: flex;
         justify-content: flex-end;
         gap: 10px;
       }
       #subProjectChoices div {
-        margin-bottom: 5px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
       }
       #subProjectChoices label {
-        margin-left: 5px;
+        margin-left: 8px;
+        color: #d1d5db;
+        cursor: pointer;
+      }
+      #subProjectChoices input[type="radio"] {
+        accent-color: #3b82f6; /* Style the radio button itself */
+      }
+      #confirmSubProject {
+        background: linear-gradient(to right, #10b981, #34d399);
+      }
+      #cancelSubProject {
+        background: linear-gradient(to right, #6b7280, #9ca3af);
+      }
+      #syncHint {
+        margin-bottom: 10px;
+        color: #facc15; /* A warning yellow color */
+        text-align: center;
+      }
+      #syncHint a {
+        color: #7dd3fc;
+        text-decoration: underline;
       }
     </style>
   </head>
@@ -75,20 +170,19 @@
       </div>
     </div>
 
-    <div>
+    <div class="dev-tools-toggle">
       <label for="devToolsToggle">Show Dev Tools</label>
       <input type="checkbox" id="devToolsToggle" />
     </div>
 
     <div id="devTools" style="display: none">
       <button id="getWorklogs">Get Worklogs</button>
-      <button id="getUserProfile" style="margin-top: 10px">
-        Get User Profile
-      </button>
-      <button id="getProjects" style="margin-top: 10px">Get Projects</button>
+      <button id="getUserProfile">Get User Profile</button>
+      <button id="getProjects">Get Projects</button>
     </div>
-    <button id="syncWorklogs" style="margin-top: 10px; font-weight: bold">
-      Sync to Intranet
+    <div id="syncHint"></div>
+    <button id="syncWorklogs" style="font-weight: bold">
+      Sync to Rapports
     </button>
     <div id="status"></div>
 

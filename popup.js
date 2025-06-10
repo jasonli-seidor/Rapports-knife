@@ -1,4 +1,4 @@
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   const startDateInput = document.getElementById("startDate");
   const endDateInput = document.getElementById("endDate");
   const getWorklogsButton = document.getElementById("getWorklogs");
@@ -8,6 +8,36 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusDiv = document.getElementById("status");
   const devToolsToggle = document.getElementById("devToolsToggle");
   const devTools = document.getElementById("devTools");
+  const syncHintDiv = document.getElementById("syncHint");
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const rapportsUrl =
+    "https://intranetnew.seidor.com/rapports/imputation-hours";
+  const onCorrectPage = tab?.url?.startsWith(rapportsUrl);
+
+  function updateButtonStates() {
+    const datesSelected = startDateInput.value && endDateInput.value;
+
+    getWorklogsButton.disabled = !datesSelected;
+    syncWorklogsButton.disabled = !datesSelected || !onCorrectPage;
+
+    if (!onCorrectPage) {
+      syncHintDiv.innerHTML = `Please go to <a href="${rapportsUrl}">Rapports</a> to activate the sync feature.`;
+      const link = syncHintDiv.querySelector("a");
+      if (link) {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          chrome.tabs.create({ url: e.target.href });
+          window.close();
+        });
+      }
+    } else {
+      syncHintDiv.innerHTML = "";
+    }
+  }
+
+  startDateInput.addEventListener("change", updateButtonStates);
+  endDateInput.addEventListener("change", updateButtonStates);
 
   // --- Dev Tools Toggle ---
   chrome.storage.local.get("devToolsVisible", (data) => {
@@ -23,18 +53,13 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.storage.local.set({ devToolsVisible: isVisible });
   });
 
-  // Set default dates
-  const today = new Date();
-  const sevenDaysAgo = new Date(today);
-  sevenDaysAgo.setDate(today.getDate() - 7);
-  startDateInput.value = sevenDaysAgo.toISOString().split("T")[0];
-  endDateInput.value = today.toISOString().split("T")[0];
-
   // --- Main Event Listeners ---
   getWorklogsButton.addEventListener("click", handleFetchWorklogs);
   getUserProfileButton.addEventListener("click", handleFetchUserProfile);
   getProjectsButton.addEventListener("click", handleFetchProjects);
   syncWorklogsButton.addEventListener("click", handleSyncWorklogs);
+
+  updateButtonStates();
 
   // --- Reusable Core Data Fetching Functions ---
 
@@ -54,7 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (tabs.length === 0)
       throw new Error(
-        "Please open and log in to the Seidor Intranet in another tab."
+        "Please open and log in to the Seidor Rapports in another tab."
       );
 
     const intranetTab = tabs[0];
@@ -421,14 +446,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const projectId = projectMap[projectLabel];
         if (!projectId) {
           console.warn(
-            `Skipping worklog for project label "${projectLabel}" - no matching project ID found in Intranet.`,
+            `Skipping worklog for project label "${projectLabel}" - no matching project ID found in Rapports.`,
             worklog
           );
           failureCount++;
           failedLogs.push({
             date: worklogDate,
             pep: pepValue,
-            reason: `Project "${projectLabel}" not found in Intranet.`,
+            reason: `Project "${projectLabel}" not found in Rapports.`,
           });
           continue;
         }

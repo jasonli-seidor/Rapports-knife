@@ -1,18 +1,20 @@
 {
   "manifest_version": 3,
-  "name": "Jira Worklog Reporter",
-  "version": "1.0",
-  "description": "A Chrome extension to fetch and display Jira worklogs for a specified date range.",
-  "permissions": ["storage", "cookies", "tabs", "scripting"],
+  "name": "Rapports🔪",
+  "version": "0.1.2",
+  "description": "Sync your Jira worklogs to Rapports",
+  "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
-    "https://*.atlassian.net/",
-    "https://intranetnew.seidor.com/",
-    "https://apis-intranet.seidor.com/"
+    "https://*.atlassian.net/*",
+    "https://intranetnew.seidor.com/*",
+    "https://apis-intranet.seidor.com/*"
   ],
   "action": {
     "default_popup": "popup.html"
   },
-  "background": {
-    "service_worker": "background.js"
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   }
 }
