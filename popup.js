@@ -174,7 +174,7 @@ const rapportApi = {
 
 const jiraApi = {
   fetch: (endpoint, options = {}) => {
-    fetch(CONFIG.URLS.JIRA_API_BASE + endpoint, options);
+    return fetch(CONFIG.URLS.JIRA_API_BASE + endpoint, options);
   },
 
   getMyself: async () => {
@@ -280,6 +280,75 @@ const formatters = {
     return `${hours}:${minutes}`;
   },
 };
+
+// --- Version Check ---
+
+function isNewerVersion(remote, local) {
+  const remoteParts = remote.split(".").map(Number);
+  const localParts = local.split(".").map(Number);
+
+  for (let i = 0; i < Math.max(remoteParts.length, localParts.length); i++) {
+    const remotePart = remoteParts[i] || 0;
+    const localPart = localParts[i] || 0;
+    if (remotePart > localPart) return true;
+    if (remotePart < localPart) return false;
+  }
+  return false;
+}
+
+function displayUpdateHint(newVersion) {
+  let updateHintDiv = document.getElementById("updateHint");
+  if (!updateHintDiv) {
+    updateHintDiv = document.createElement("div");
+    updateHintDiv.id = "updateHint";
+    updateHintDiv.style.padding = "10px";
+    updateHintDiv.style.backgroundColor = "#fff3cd";
+    updateHintDiv.style.color = "#664d03";
+    updateHintDiv.style.border = "1px solid #ffc107";
+    updateHintDiv.style.borderRadius = "5px";
+    updateHintDiv.style.marginBottom = "10px";
+    updateHintDiv.style.textAlign = "center";
+    const firstChild = document.body.firstChild;
+    document.body.insertBefore(updateHintDiv, firstChild);
+  }
+
+  updateHintDiv.innerHTML = `
+        New version ${newVersion} is available,<br>please pull the latest changes.
+        <button id="dismissUpdate" style="margin-left: 10px; border: none; background: transparent; color: #6c757d; cursor: pointer; text-decoration: underline; font-size: 12px; padding: 0;">Don't show again</button>
+    `;
+
+  document.getElementById("dismissUpdate").addEventListener("click", () => {
+    chrome.storage.local.set({ dismissedVersion: newVersion });
+    updateHintDiv.style.display = "none";
+  });
+}
+
+async function checkVersion() {
+  try {
+    const remoteManifestUrl =
+      "https://raw.githubusercontent.com/jaysonliang-seidor/Rapports-knife/refs/heads/main/manifest.json";
+    const response = await fetch(remoteManifestUrl);
+    if (!response.ok) {
+      console.warn("Could not fetch remote manifest for version check.");
+      return;
+    }
+    const remoteManifest = await response.json();
+    const remoteVersion = remoteManifest.version;
+
+    const localManifest = chrome.runtime.getManifest();
+    const localVersion = localManifest.version;
+
+    if (isNewerVersion(remoteVersion, localVersion)) {
+      chrome.storage.local.get("dismissedVersion", ({ dismissedVersion }) => {
+        if (dismissedVersion !== remoteVersion) {
+          displayUpdateHint(remoteVersion);
+        }
+      });
+    }
+  } catch (error) {
+    console.error("Version check failed:", error);
+  }
+}
 
 // --- UI Functions ---
 
@@ -630,5 +699,6 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   syncWorklogsButton.addEventListener("click", handleSyncWorklogs);
 
+  checkVersion();
   updateButtonStates(elements);
 });
