@@ -1,51 +1,619 @@
-document.addEventListener("DOMContentLoaded", async () => {
-  const startDateInput = document.getElementById("startDate");
-  const endDateInput = document.getElementById("endDate");
-  const getWorklogsButton = document.getElementById("getWorklogs");
-  const getUserProfileButton = document.getElementById("getUserProfile");
-  const getProjectsButton = document.getElementById("getProjects");
-  const syncWorklogsButton = document.getElementById("syncWorklogs");
-  const statusDiv = document.getElementById("status");
-  const devToolsToggle = document.getElementById("devToolsToggle");
-  const devTools = document.getElementById("devTools");
-  const syncHintDiv = document.getElementById("syncHint");
+/**
+ * Configuration object for the Jira Worklog Reporter extension.
+ */
+const CONFIG = {
+  URLS: {
+    RAPPORTS: "https://intranetnew.seidor.com/rapports/imputation-hours",
+    RAPPORTS_API_BASE: "https://apis-intranet.seidor.com",
+    JIRA_API_BASE: "https://seidorcc.atlassian.net/rest/api/3",
+    SEIDOR_INTRANET: "https://intranetnew.seidor.com/*",
+  },
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const rapportsUrl =
-    "https://intranetnew.seidor.com/rapports/imputation-hours";
-  const onCorrectPage = tab?.url?.startsWith(rapportsUrl);
+  API_ENDPOINTS: {
+    USER_PROFILE: "/authorizationv2/user-profile",
+    PROJECTS: "/authorizationv2/paginated-projects",
+    SUB_PROJECTS: "/collections/paginated-subprojects",
+    IMPUTATIONS: "/rapports/imputations",
+    JIRA_MYSELF: "/myself",
+    JIRA_SEARCH: "/search",
+    JIRA_ISSUE_WORKLOG: (issueId) => `/issue/${issueId}/worklog`,
+  },
 
-  function updateButtonStates() {
-    const datesSelected = startDateInput.value && endDateInput.value;
+  RAPPORTS_PAYLOAD: {
+    CATEGORY: "PR",
+    SITUATION_ID: "6", // Situation: office
+    DEFAULT_TASK_ID: "",
+    INTERNAL_REF: "",
+  },
 
-    getWorklogsButton.disabled = !datesSelected;
-    syncWorklogsButton.disabled = !datesSelected || !onCorrectPage;
+  JIRA: {
+    PEP_CUSTOM_FIELD: "customfield_10120",
+    PEP_MAPPING: {
+      // Key: Jira issue key prefix or full key
+      // Value: Rule for mapping
+      "LEC-": {
+        // If the PEP value includes "14-SEIDOR-AM" or is empty, set the PEP to "14-SEIDOR-AM&LEC"
+        condition: (pep) =>
+          pep.value.toUpperCase().includes("14-SEIDOR-AM") ||
+          pep.value.length === 0,
+        result: { pep: { value: "14-SEIDOR-AM&LEC" } },
+      },
+      "SA-17": {
+        result: { pep: { value: "14-ZPR-VAC25" } },
+      },
+      "SA-18": {
+        result: {
+          pep: { value: "14-SEIDOR-AM&GENERAL" },
+          comment: "Daily Standup",
+        },
+      },
+      "SA-19": {
+        // If the comment includes "team building" or "teambuilding", set the PEP to "14-ZPR-TA&TEAMBUILDING"
+        condition: (_pep, comment) =>
+          comment.toLowerCase().includes("team building") ||
+          comment.toLowerCase().includes("teambuilding"),
+        result: { pep: { value: "14-ZPR-TA&TEAMBUILDING" } },
+        fallback: { pep: { value: "14-ZPR-TA&OTHERS" } },
+      },
+    },
+  },
+};
 
-    if (!onCorrectPage) {
-      syncHintDiv.innerHTML = `Please go to <a href="${rapportsUrl}">Rapports</a> to activate the sync feature.`;
-      const link = syncHintDiv.querySelector("a");
-      if (link) {
-        link.addEventListener("click", (e) => {
-          e.preventDefault();
-          chrome.tabs.create({ url: e.target.href });
-          window.close();
-        });
+// --- DOM Elements ---
+const getElements = () => ({
+  startDateInput: document.getElementById("startDate"),
+  endDateInput: document.getElementById("endDate"),
+  getWorklogsButton: document.getElementById("getWorklogs"),
+  getUserProfileButton: document.getElementById("getUserProfile"),
+  getProjectsButton: document.getElementById("getProjects"),
+  syncWorklogsButton: document.getElementById("syncWorklogs"),
+  statusDiv: document.getElementById("status"),
+  devToolsToggle: document.getElementById("devToolsToggle"),
+  devTools: document.getElementById("devTools"),
+  syncHintDiv: document.getElementById("syncHint"),
+  modal: document.getElementById("subProjectModal"),
+  modalTitle: document.getElementById("modalTitle"),
+  choicesDiv: document.getElementById("subProjectChoices"),
+  confirmBtn: document.getElementById("confirmSubProject"),
+  cancelBtn: document.getElementById("cancelSubProject"),
+});
+
+// --- API Layer ---
+
+async function fetchFromApi(url, options = {}, token) {
+  const headers = {
+    ...options.headers,
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const response = await fetch(url, { ...options, headers });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(
+      `API request to ${url} failed with status ${response.status}: ${errorBody}`
+    );
+  }
+  return response.json();
+}
+
+async function getBearerToken() {
+  const queryOptions = { url: CONFIG.URLS.SEIDOR_INTRANET };
+  let [activeTab] = await chrome.tabs.query({ ...queryOptions, active: true });
+  const intranetTab =
+    activeTab || (await chrome.tabs.query(queryOptions)).at(0);
+
+  if (!intranetTab) {
+    throw new Error(
+      "Please open and log in to the Seidor Rapports in another tab."
+    );
+  }
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: intranetTab.id },
+    function: () => sessionStorage.getItem("appState"),
+  });
+
+  if (!results?.[0]?.result) {
+    throw new Error("Could not retrieve 'appState' from session storage.");
+  }
+  const appState = JSON.parse(results[0].result);
+  const token = appState?.tokenData?.accessToken;
+
+  if (typeof token !== "string" || !token.startsWith("ey")) {
+    throw new Error("Could not find a valid token within appState.");
+  }
+  return token;
+}
+
+const rapportApi = {
+  getUserData: (token) => {
+    fetchFromApi(
+      CONFIG.URLS.RAPPORTS_API_BASE + CONFIG.API_ENDPOINTS.USER_PROFILE,
+      {},
+      token
+    );
+  },
+
+  getProjectsData: (token) =>
+    fetchFromApi(
+      CONFIG.URLS.RAPPORTS_API_BASE + CONFIG.API_ENDPOINTS.PROJECTS,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          multiSortedColumns: [{ active: "label", direction: "asc" }],
+          filterMap: { moduleId: "2" },
+          pagination: { pageNumber: 1, pageSize: 100000 },
+        }),
+      },
+      token
+    ),
+
+  getSubProjectsData: (projectId, token) =>
+    fetchFromApi(
+      CONFIG.URLS.RAPPORTS_API_BASE + CONFIG.API_ENDPOINTS.SUB_PROJECTS,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          filterMap: { projectId, isActive: "true" },
+          pagination: { pageNumber: 1, pageSize: 100000 },
+        }),
+      },
+      token
+    ),
+
+  postImputation: (payload, token) =>
+    fetchFromApi(
+      CONFIG.URLS.RAPPORTS_API_BASE + CONFIG.API_ENDPOINTS.IMPUTATIONS,
+      { method: "POST", body: JSON.stringify(payload) },
+      token
+    ),
+};
+
+const jiraApi = {
+  fetch: (endpoint, options = {}) => {
+    fetch(CONFIG.URLS.JIRA_API_BASE + endpoint, options);
+  },
+
+  getMyself: async () => {
+    const response = await jiraApi.fetch(CONFIG.API_ENDPOINTS.JIRA_MYSELF);
+    if (!response.ok) throw new Error("Failed to fetch Jira user.");
+    return response.json();
+  },
+
+  searchIssuesWithWorklogs: async (jql) => {
+    const searchUrl = `${
+      CONFIG.API_ENDPOINTS.JIRA_SEARCH
+    }?jql=${encodeURIComponent(jql)}&fields=${CONFIG.JIRA.PEP_CUSTOM_FIELD}`;
+    const response = await jiraApi.fetch(searchUrl);
+    if (!response.ok) throw new Error("Failed to search Jira issues.");
+    const searchData = await response.json();
+    return searchData.issues || [];
+  },
+
+  getIssueWorklogs: async (issueId) => {
+    const response = await jiraApi.fetch(
+      CONFIG.API_ENDPOINTS.JIRA_ISSUE_WORKLOG(issueId)
+    );
+    if (!response.ok) return []; // Gracefully fail for single issue
+    const result = await response.json();
+    return result.worklogs || [];
+  },
+};
+
+// --- Logic ---
+
+function customizeWorklogDetails(issue, originalComment) {
+  const { PEP_MAPPING, PEP_CUSTOM_FIELD } = CONFIG.JIRA;
+  const issuePep = issue.fields[PEP_CUSTOM_FIELD];
+  let finalPep = issuePep;
+  let finalComment = originalComment;
+
+  for (const key in PEP_MAPPING) {
+    if (issue.key.startsWith(key)) {
+      const rule = PEP_MAPPING[key];
+      const conditionMet = rule.condition
+        ? rule.condition(issuePep, originalComment)
+        : true;
+
+      if (conditionMet) {
+        if (rule.result.pep) finalPep = rule.result.pep;
+        if (rule.result.comment && originalComment === "No comment") {
+          finalComment = rule.result.comment;
+        }
+      } else if (rule.fallback) {
+        if (rule.fallback.pep) finalPep = rule.fallback.pep;
       }
-    } else {
-      syncHintDiv.innerHTML = "";
+      break; // Assume first matching rule is sufficient
     }
   }
 
-  startDateInput.addEventListener("change", updateButtonStates);
-  endDateInput.addEventListener("change", updateButtonStates);
+  return { pep: finalPep, comment: finalComment };
+}
 
-  // --- Dev Tools Toggle ---
-  chrome.storage.local.get("devToolsVisible", (data) => {
-    if (data.devToolsVisible) {
+async function getJiraWorklogs(startDate, endDate) {
+  const { accountId } = await jiraApi.getMyself();
+  const jql = `worklogDate >= "${startDate}" AND worklogDate <= "${endDate}" AND worklogAuthor = currentUser()`;
+
+  const issues = await jiraApi.searchIssuesWithWorklogs(jql);
+  if (issues.length === 0) return [];
+
+  const worklogPromises = issues.map(async (issue) => {
+    const worklogsForIssue = await jiraApi.getIssueWorklogs(issue.id);
+    return worklogsForIssue
+      .filter((wl) => {
+        const worklogDate = new Date(wl.started).toISOString().split("T")[0];
+        return (
+          wl.author.accountId === accountId &&
+          worklogDate >= startDate &&
+          worklogDate <= endDate
+        );
+      })
+      .map((worklog) => {
+        const commentText =
+          worklog.comment?.content?.[0]?.content?.[0]?.text || "No comment";
+        const { pep, comment } = customizeWorklogDetails(issue, commentText);
+        return {
+          timeSpentSeconds: worklog.timeSpentSeconds,
+          comment,
+          started: worklog.started,
+          pep,
+        };
+      });
+  });
+
+  const nestedWorklogs = await Promise.all(worklogPromises);
+  return nestedWorklogs.flat();
+}
+
+const formatters = {
+  date: (date) =>
+    `${String(date.getDate()).padStart(2, "0")}/${String(
+      date.getMonth() + 1
+    ).padStart(2, "0")}/${date.getFullYear()}`,
+  hours: (seconds) => {
+    const totalMinutes = Math.floor(seconds / 60);
+    const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
+    const minutes = String(totalMinutes % 60).padStart(2, "0");
+    return `${hours}:${minutes}`;
+  },
+};
+
+// --- UI Functions ---
+
+function updateStatus(message, isHtml = false) {
+  const { statusDiv } = getElements();
+  if (isHtml) {
+    statusDiv.innerHTML = message;
+  } else {
+    statusDiv.textContent = message;
+  }
+}
+
+async function updateButtonStates(elements) {
+  const {
+    startDateInput,
+    endDateInput,
+    syncWorklogsButton,
+    getWorklogsButton,
+    syncHintDiv,
+    getUserProfileButton,
+    getProjectsButton,
+  } = elements;
+  const datesSelected = startDateInput.value && endDateInput.value;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const onCorrectPage = tab?.url?.startsWith(CONFIG.URLS.RAPPORTS);
+
+  const startDate = new Date(startDateInput.value + "T00:00:00");
+  const today = new Date();
+  const isPreviousMonth =
+    startDate.getFullYear() < today.getFullYear() ||
+    (startDate.getFullYear() === today.getFullYear() &&
+      startDate.getMonth() < today.getMonth());
+
+  // This button only depends on having dates selected
+  getWorklogsButton.disabled = !datesSelected;
+
+  // These buttons depend on being on the Rapports page
+  const hint = "Disabled outside of Rapports";
+  getUserProfileButton.disabled = !onCorrectPage;
+  getUserProfileButton.title = !onCorrectPage ? hint : "";
+
+  getProjectsButton.disabled = !onCorrectPage;
+  getProjectsButton.title = !onCorrectPage ? hint : "";
+
+  // The sync button has multiple conditions
+  syncWorklogsButton.disabled =
+    !datesSelected || !onCorrectPage || isPreviousMonth;
+  syncWorklogsButton.title = !onCorrectPage ? hint : "";
+
+  if (!onCorrectPage) {
+    syncHintDiv.innerHTML = `Please go to <a href="${CONFIG.URLS.RAPPORTS}">Rapports</a> to activate the sync feature.`;
+    syncHintDiv.querySelector("a")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      chrome.tabs.create({ url: e.target.href });
+      window.close();
+    });
+  } else {
+    syncHintDiv.innerHTML = "";
+  }
+}
+
+function promptForSubProject(matches, keyword) {
+  const { modal, choicesDiv, confirmBtn, cancelBtn, modalTitle } =
+    getElements();
+
+  modalTitle.textContent = `Select Sub-Project for "${keyword}"`;
+  choicesDiv.innerHTML = ""; // Clear previous choices
+
+  return new Promise((resolve, reject) => {
+    matches.forEach((match, index) => {
+      const radioId = `subproject-choice-${index}`;
+      const wrapper = document.createElement("div");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "subProjectChoice";
+      input.id = radioId;
+      input.value = match.value;
+      if (index === 0) input.checked = true;
+
+      const label = document.createElement("label");
+      label.htmlFor = radioId;
+      label.textContent = match.label;
+
+      wrapper.appendChild(input);
+      wrapper.appendChild(label);
+      choicesDiv.appendChild(wrapper);
+    });
+
+    const cleanup = (listener) => {
+      modal.style.display = "none";
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+    };
+
+    const onConfirm = () => {
+      cleanup();
+      const selected = choicesDiv.querySelector("input:checked");
+      resolve(selected.value);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      reject(new Error("User cancelled selection."));
+    };
+
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    modal.style.display = "flex";
+  });
+}
+
+function displaySyncSummary(successCount, failedLogs) {
+  const failureCount = failedLogs.length;
+  let summaryMessage = `Sync complete. Success: ${successCount}, Failed: ${failureCount}.`;
+
+  if (failureCount > 0) {
+    let failureHtml = `
+      <div style="margin-top: 10px; font-style: normal; text-align: left;">
+        <strong>Failed Syncs:</strong>
+        <ul style="padding-left: 20px; margin-top: 5px; max-height: 100px; overflow-y: auto;">`;
+    for (const log of failedLogs) {
+      const pep = log.pep.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const reason = log.reason.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      failureHtml += `<li style="margin-bottom: 5px;"><strong>${log.date}</strong> (${pep}):<br>${reason}</li>`;
+    }
+    failureHtml += "</ul></div>";
+    updateStatus(summaryMessage + failureHtml, true);
+    console.warn("--- Failed Syncs ---", failedLogs);
+  } else {
+    updateStatus(summaryMessage + " All worklogs synced. Reloading page...");
+    setTimeout(async () => {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        url: `${CONFIG.URLS.RAPPORTS}*`,
+      });
+      if (tab) chrome.tabs.reload(tab.id);
+    }, 1000);
+  }
+}
+
+// --- Event Handlers ---
+
+async function handleDevAction(action, successMessage) {
+  updateStatus(`Fetching ${action.name}...`);
+  try {
+    const token = await getBearerToken();
+    const result = await action(token);
+    console.log(`--- ${action.name} ---`, result);
+    updateStatus(successMessage);
+  } catch (error) {
+    console.error("Error:", error);
+    updateStatus(`Error: ${error.message}`);
+  }
+}
+
+async function handleFetchWorklogs() {
+  updateStatus("Fetching worklogs...");
+  const { startDateInput, endDateInput } = getElements();
+  try {
+    const worklogs = await getJiraWorklogs(
+      startDateInput.value,
+      endDateInput.value
+    );
+    console.log("--- Filtered Worklogs ---", worklogs);
+    updateStatus(`Found and logged ${worklogs.length} worklog(s) to console.`);
+  } catch (error) {
+    console.error("Error:", error);
+    updateStatus(`Error: ${error.message}`);
+  }
+}
+
+async function handleSyncWorklogs() {
+  const { startDateInput, endDateInput } = getElements();
+
+  updateStatus("Starting sync...");
+  try {
+    const token = await getBearerToken();
+    updateStatus("Fetching all required data...");
+
+    const [user, projectsResponse, worklogs] = await Promise.all([
+      rapportApi.getUserData(token),
+      rapportApi.getProjectsData(token),
+      getJiraWorklogs(startDateInput.value, endDateInput.value),
+    ]);
+
+    if (worklogs.length === 0) {
+      updateStatus("No worklogs found in Jira for the selected period.");
+      return;
+    }
+
+    const projects = projectsResponse.data;
+    const projectMap = projects.reduce((acc, proj) => {
+      acc[proj.label] = proj.value;
+      return acc;
+    }, {});
+
+    let successCount = 0;
+    const failedLogs = [];
+
+    updateStatus(
+      `Data fetched. Starting imputation for ${worklogs.length} logs...`
+    );
+
+    for (const [index, worklog] of worklogs.entries()) {
+      const worklogDateStr = new Date(worklog.started)
+        .toISOString()
+        .split("T")[0];
+      const pepValue = worklog.pep?.value;
+
+      const fail = (reason) => {
+        failedLogs.push({
+          date: worklogDateStr,
+          pep: pepValue || "N/A",
+          reason,
+        });
+      };
+
+      if (!pepValue) {
+        fail("Missing PEP value in Jira.");
+        continue;
+      }
+
+      let projectLabel = pepValue;
+      let subProjectKeyword = null;
+      if (pepValue.includes("&")) {
+        [projectLabel, subProjectKeyword] = pepValue.split("&");
+      }
+
+      const projectId = projectMap[projectLabel];
+      if (!projectId) {
+        fail(`Project "${projectLabel}" not found in Rapports.`);
+        continue;
+      }
+
+      let subProjectId = CONFIG.RAPPORTS_PAYLOAD.DEFAULT_TASK_ID;
+      if (subProjectKeyword) {
+        try {
+          const subProjects = (
+            await rapportApi.getSubProjectsData(projectId, token)
+          ).data;
+          const matching = subProjects.filter((sp) =>
+            sp.label.toUpperCase().includes(subProjectKeyword.toUpperCase())
+          );
+
+          if (matching.length === 1) {
+            subProjectId = matching[0].value;
+          } else if (matching.length > 1) {
+            updateStatus(
+              `Waiting for sub-project selection for PEP: ${pepValue}`
+            );
+            subProjectId = await promptForSubProject(
+              matching,
+              subProjectKeyword
+            );
+          } else {
+            fail(`Sub-project with keyword "${subProjectKeyword}" not found.`);
+            continue;
+          }
+        } catch (error) {
+          fail(
+            error.message.includes("cancelled")
+              ? "Sub-project selection cancelled."
+              : "API error fetching sub-projects."
+          );
+          continue;
+        }
+      }
+
+      const date = new Date(worklog.started);
+      const payload = {
+        id: "",
+        fromDate: formatters.date(date),
+        toDate: formatters.date(date),
+        userId: user.id,
+        projectId,
+        subProjectId,
+        description: worklog.comment,
+        hours: formatters.hours(worklog.timeSpentSeconds),
+        category: CONFIG.RAPPORTS_PAYLOAD.CATEGORY,
+        situationId: CONFIG.RAPPORTS_PAYLOAD.SITUATION_ID,
+        taskId: CONFIG.RAPPORTS_PAYLOAD.DEFAULT_TASK_ID,
+        internalRef: CONFIG.RAPPORTS_PAYLOAD.INTERNAL_REF,
+      };
+
+      try {
+        updateStatus(
+          `Syncing ${index + 1}/${worklogs.length}... (PEP: ${pepValue})`
+        );
+        await rapportApi.postImputation(payload, token);
+        successCount++;
+      } catch (error) {
+        fail(`Imputation API call failed: ${error.message}`);
+      }
+    }
+    displaySyncSummary(successCount, failedLogs);
+  } catch (error) {
+    console.error("Sync failed:", error);
+    updateStatus(`Error: ${error.message}`);
+  }
+}
+
+// --- Initializer ---
+
+document.addEventListener("DOMContentLoaded", () => {
+  const elements = getElements();
+
+  const {
+    startDateInput,
+    endDateInput,
+    devToolsToggle,
+    getWorklogsButton,
+    getUserProfileButton,
+    getProjectsButton,
+    syncWorklogsButton,
+    devTools,
+  } = elements;
+
+  // Set default dates
+  const today = new Date();
+  const todayString = today.toISOString().split("T")[0];
+  startDateInput.value = todayString;
+  endDateInput.value = todayString;
+
+  // Restore Dev Tools state
+  chrome.storage.local.get("devToolsVisible", ({ devToolsVisible }) => {
+    if (devToolsVisible) {
       devTools.style.display = "block";
       devToolsToggle.checked = true;
     }
   });
+
+  // Add Event Listeners
+  startDateInput.addEventListener("change", () => updateButtonStates(elements));
+  endDateInput.addEventListener("change", () => updateButtonStates(elements));
 
   devToolsToggle.addEventListener("change", () => {
     const isVisible = devToolsToggle.checked;
@@ -53,543 +621,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.storage.local.set({ devToolsVisible: isVisible });
   });
 
-  // --- Main Event Listeners ---
   getWorklogsButton.addEventListener("click", handleFetchWorklogs);
-  getUserProfileButton.addEventListener("click", handleFetchUserProfile);
-  getProjectsButton.addEventListener("click", handleFetchProjects);
+  getUserProfileButton.addEventListener("click", () =>
+    handleDevAction(rapportApi.getUserData, "User profile logged to console.")
+  );
+  getProjectsButton.addEventListener("click", () =>
+    handleDevAction(rapportApi.getProjectsData, "Projects logged to console.")
+  );
   syncWorklogsButton.addEventListener("click", handleSyncWorklogs);
 
-  updateButtonStates();
-
-  // --- Reusable Core Data Fetching Functions ---
-
-  async function getBearerToken() {
-    // Prioritize finding an active tab matching the URL.
-    let tabs = await chrome.tabs.query({
-      active: true,
-      url: "https://intranetnew.seidor.com/*",
-    });
-
-    // If no active tab is found, search for any tab with the URL.
-    if (tabs.length === 0) {
-      tabs = await chrome.tabs.query({
-        url: "https://intranetnew.seidor.com/*",
-      });
-    }
-
-    if (tabs.length === 0)
-      throw new Error(
-        "Please open and log in to the Seidor Rapports in another tab."
-      );
-
-    const intranetTab = tabs[0];
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: intranetTab.id },
-      function: () => sessionStorage.getItem("appState"),
-    });
-
-    if (!results || results.length === 0 || !results[0].result)
-      throw new Error("Could not retrieve 'appState' from session storage.");
-
-    const appState = JSON.parse(results[0].result);
-    if (appState?.tokenData?.accessToken) {
-      const token = appState.tokenData.accessToken;
-      if (
-        typeof token === "string" &&
-        token.startsWith("ey") &&
-        token.length > 100
-      )
-        return token;
-    }
-    throw new Error("Could not find a valid token within appState.");
-  }
-
-  async function getUserData(token) {
-    const response = await fetch(
-      "https://apis-intranet.seidor.com/authorizationv2/user-profile",
-      {
-        headers: { authorization: `Bearer ${token}` },
-      }
-    );
-    if (!response.ok)
-      throw new Error(`Fetching user profile failed: ${response.statusText}`);
-    return await response.json();
-  }
-
-  async function getProjectsData(token) {
-    const response = await fetch(
-      "https://apis-intranet.seidor.com/authorizationv2/paginated-projects",
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          multiSortedColumns: [{ active: "label", direction: "asc" }],
-          filterMap: { moduleId: "2" },
-          pagination: { pageNumber: 1, pageSize: 100000 },
-        }),
-      }
-    );
-    if (!response.ok)
-      throw new Error(`Fetching projects failed: ${response.statusText}`);
-    const projects = await response.json();
-    return projects.data;
-  }
-
-  async function getSubProjectsData(projectId, token) {
-    const response = await fetch(
-      "https://apis-intranet.seidor.com/collections/paginated-subprojects",
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          filterMap: {
-            projectId: projectId,
-            isActive: "true",
-          },
-          pagination: {
-            pageNumber: 1,
-            pageSize: 100000,
-          },
-        }),
-      }
-    );
-    if (!response.ok)
-      throw new Error(
-        `Fetching sub-projects for project ID ${projectId} failed: ${response.statusText}`
-      );
-    const subProjects = await response.json();
-    return subProjects.data;
-  }
-
-  async function getJiraWorklogs(startDate, endDate) {
-    const JIRA_BASE_URL = "https://seidorcc.atlassian.net";
-    const userResponse = await fetch(`${JIRA_BASE_URL}/rest/api/3/myself`);
-    if (!userResponse.ok)
-      throw new Error(`Failed to fetch Jira user: ${userResponse.statusText}`);
-    const userData = await userResponse.json();
-    const accountId = userData.accountId;
-
-    const jql = `worklogDate >= "${startDate}" AND worklogDate <= "${endDate}" AND worklogAuthor = currentUser()`;
-    const searchUrl = `${JIRA_BASE_URL}/rest/api/3/search?jql=${encodeURIComponent(
-      jql
-    )}&fields=customfield_10120`;
-    const searchResponse = await fetch(searchUrl);
-    if (!searchResponse.ok)
-      throw new Error(
-        `Failed to search Jira issues: ${searchResponse.statusText}`
-      );
-    const searchData = await searchResponse.json();
-    const issues = searchData.issues;
-
-    if (issues.length === 0) return [];
-
-    const issueInfoMap = issues.reduce((acc, issue) => {
-      acc[issue.id] = { pep: issue.fields.customfield_10120, key: issue.key };
-      return acc;
-    }, {});
-
-    const worklogPromises = issues.map((issue) =>
-      fetch(`${JIRA_BASE_URL}/rest/api/3/issue/${issue.id}/worklog`).then(
-        (res) => res.json()
-      )
-    );
-    const worklogResults = await Promise.all(worklogPromises);
-    const allWorklogs = worklogResults.flatMap((result) => result.worklogs);
-
-    return allWorklogs
-      .filter((worklog) => {
-        const worklogStartedDate = new Date(worklog.started)
-          .toISOString()
-          .split("T")[0];
-        return (
-          worklog.author.accountId === accountId &&
-          worklogStartedDate >= startDate &&
-          worklogStartedDate <= endDate
-        );
-      })
-      .map((worklog) => {
-        let commentText =
-          worklog.comment?.content?.[0]?.content?.[0]?.text || "No comment";
-        let issueInfo = issueInfoMap[worklog.issueId] || {};
-
-        // Custom PEP logic as if/else statements
-        if (
-          issueInfo.key.startsWith("LEC-") &&
-          (issueInfo.pep.value.includes("14-SEIDOR-AM".toUpperCase()) ||
-            issueInfo.pep.value.length === 0)
-        ) {
-          issueInfo.pep = { value: "14-SEIDOR-AM&LEC" };
-        }
-        if (issueInfo.key === "SA-17") {
-          issueInfo.pep = { value: "14-ZPR-VAC25" };
-        }
-        if (issueInfo.key === "SA-18") {
-          issueInfo.pep = { value: "14-SEIDOR-AM&GENERAL" };
-          if (commentText === "No comment") {
-            commentText = "Daily Standup";
-          }
-        }
-        if (issueInfo.key === "SA-19") {
-          if (
-            commentText.toLowerCase().includes("team building") ||
-            commentText.toLowerCase().includes("teambuilding")
-          ) {
-            issueInfo.pep = { value: "14-ZPR-TA&TEAMBUILDING" };
-          } else {
-            issueInfo.pep = { value: "14-ZPR-TA&OTHERS" };
-          }
-        }
-
-        return {
-          timeSpentSeconds: worklog.timeSpentSeconds,
-          comment: commentText,
-          started: worklog.started,
-          PEP: issueInfo.pep,
-        };
-      });
-  }
-
-  async function postImputation(payload, token) {
-    const response = await fetch(
-      "https://apis-intranet.seidor.com/rapports/imputations",
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json, text/plain, */*",
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Imputation failed for project ${payload.projectId} 
-                on ${payload.fromDate}: ${response.statusText} - ${errorBody}`);
-    }
-    return await response.json();
-  }
-
-  async function handleFetchUserProfile() {
-    statusDiv.textContent = "Fetching user profile...";
-    try {
-      const token = await getBearerToken();
-      const userProfile = await getUserData(token);
-      console.log("--- User Profile ---", userProfile);
-      statusDiv.textContent = "User profile logged to console.";
-    } catch (error) {
-      console.error("Error:", error);
-      statusDiv.textContent = `Error: ${error.message}`;
-    }
-  }
-
-  async function handleFetchProjects() {
-    statusDiv.textContent = "Fetching projects...";
-    try {
-      const token = await getBearerToken();
-      const projects = await getProjectsData(token);
-      console.log("--- Projects ---", projects);
-      statusDiv.textContent = "Projects logged to console.";
-    } catch (error) {
-      console.error("Error:", error);
-      statusDiv.textContent = `Error: ${error.message}`;
-    }
-  }
-
-  async function handleFetchWorklogs() {
-    statusDiv.textContent = "Fetching worklogs...";
-    try {
-      const worklogs = await getJiraWorklogs(
-        startDateInput.value,
-        endDateInput.value
-      );
-      console.log("--- Filtered Worklogs ---", worklogs);
-      statusDiv.textContent = `Found and logged ${worklogs.length} worklog(s) to the console.`;
-    } catch (error) {
-      console.error("Error:", error);
-      statusDiv.textContent = `Error: ${error.message}`;
-    }
-  }
-
-  function promptForSubProject(matches, keyword) {
-    const modal = document.getElementById("subProjectModal");
-    const choicesDiv = document.getElementById("subProjectChoices");
-    const confirmBtn = document.getElementById("confirmSubProject");
-    const cancelBtn = document.getElementById("cancelSubProject");
-    const modalTitle = document.getElementById("modalTitle");
-
-    modalTitle.textContent = `Select Sub-Project for "${keyword}"`;
-    choicesDiv.innerHTML = ""; // Clear previous choices
-
-    return new Promise((resolve, reject) => {
-      matches.forEach((match, index) => {
-        const radioId = `subproject-choice-${index}`;
-        const wrapper = document.createElement("div");
-        const input = document.createElement("input");
-        input.type = "radio";
-        input.name = "subProjectChoice";
-        input.id = radioId;
-        input.value = match.value;
-        if (index === 0) input.checked = true;
-
-        const label = document.createElement("label");
-        label.htmlFor = radioId;
-        label.textContent = match.label;
-
-        wrapper.appendChild(input);
-        wrapper.appendChild(label);
-        choicesDiv.appendChild(wrapper);
-      });
-
-      const onConfirm = () => {
-        cleanup();
-        const selected = choicesDiv.querySelector("input:checked");
-        resolve(selected.value);
-      };
-
-      const onCancel = () => {
-        cleanup();
-        reject(new Error("User cancelled selection."));
-      };
-
-      const cleanup = () => {
-        modal.style.display = "none";
-        confirmBtn.removeEventListener("click", onConfirm);
-        cancelBtn.removeEventListener("click", onCancel);
-      };
-
-      confirmBtn.addEventListener("click", onConfirm);
-      cancelBtn.addEventListener("click", onCancel);
-      modal.style.display = "flex";
-    });
-  }
-
-  async function handleSyncWorklogs() {
-    const today = new Date();
-    const currentMonth = today.getMonth();
-    const currentYear = today.getFullYear();
-
-    // The time zone offset needs to be considered for an accurate date comparison.
-    const startDate = new Date(startDateInput.value + "T00:00:00");
-    const startMonth = startDate.getMonth();
-    const startYear = startDate.getFullYear();
-
-    if (
-      startYear < currentYear ||
-      (startYear === currentYear && startMonth < currentMonth)
-    ) {
-      statusDiv.innerHTML =
-        '<strong style="color: red;">Syncing for previous months is not allowed.</strong>';
-      return;
-    }
-
-    statusDiv.textContent = "Starting sync...";
-    try {
-      const token = await getBearerToken();
-      statusDiv.textContent = "Fetching all required data...";
-
-      const [user, projects, worklogs] = await Promise.all([
-        getUserData(token),
-        getProjectsData(token),
-        getJiraWorklogs(startDateInput.value, endDateInput.value),
-      ]);
-
-      if (worklogs.length === 0) {
-        statusDiv.textContent = "No worklogs found in Jira to sync.";
-        return;
-      }
-
-      const projectMap = projects.reduce((acc, proj) => {
-        acc[proj.label] = proj.value;
-        return acc;
-      }, {});
-
-      let successCount = 0;
-      let failureCount = 0;
-      const failedLogs = [];
-      const total = worklogs.length;
-
-      statusDiv.textContent = `Data fetched. Starting imputation for ${total} worklogs...`;
-
-      for (const [index, worklog] of worklogs.entries()) {
-        const worklogDate = new Date(worklog.started)
-          .toISOString()
-          .split("T")[0];
-        const pepValue = worklog.PEP?.value;
-        if (!pepValue) {
-          console.warn("Skipping worklog due to missing PEP value:", worklog);
-          failureCount++;
-          failedLogs.push({
-            date: worklogDate,
-            pep: "N/A",
-            reason: "Missing PEP value in Jira.",
-          });
-          continue;
-        }
-
-        let projectLabel = pepValue;
-        let subProjectKeyword = null;
-        let subProjectId = "";
-
-        if (pepValue.includes("&")) {
-          const parts = pepValue.split("&");
-          projectLabel = parts[0];
-          subProjectKeyword = parts[1];
-        }
-
-        const projectId = projectMap[projectLabel];
-        if (!projectId) {
-          console.warn(
-            `Skipping worklog for project label "${projectLabel}" - no matching project ID found in Rapports.`,
-            worklog
-          );
-          failureCount++;
-          failedLogs.push({
-            date: worklogDate,
-            pep: pepValue,
-            reason: `Project "${projectLabel}" not found in Rapports.`,
-          });
-          continue;
-        }
-
-        if (subProjectKeyword) {
-          try {
-            const subProjects = await getSubProjectsData(projectId, token);
-            const matchingSubProjects = subProjects.filter((sp) =>
-              sp.label.toUpperCase().includes(subProjectKeyword.toUpperCase())
-            );
-
-            if (matchingSubProjects.length === 1) {
-              subProjectId = matchingSubProjects[0].value;
-            } else if (matchingSubProjects.length > 1) {
-              try {
-                statusDiv.textContent = `Waiting for selection for PEP: ${pepValue}`;
-                subProjectId = await promptForSubProject(
-                  matchingSubProjects,
-                  subProjectKeyword
-                );
-                statusDiv.textContent = `Syncing ${index + 1}/${total}...`;
-              } catch (selectionError) {
-                console.warn(
-                  `Skipping due to user cancellation for PEP: ${pepValue}`
-                );
-                failureCount++;
-                failedLogs.push({
-                  date: worklogDate,
-                  pep: pepValue,
-                  reason: "Sub-project selection cancelled.",
-                });
-                continue;
-              }
-            } else {
-              console.warn(
-                `Skipping: Found project "${projectLabel}" but couldn't find sub-project with keyword "${subProjectKeyword}".`,
-                worklog
-              );
-              failureCount++;
-              failedLogs.push({
-                date: worklogDate,
-                pep: pepValue,
-                reason: `Sub-project keyword "${subProjectKeyword}" not found.`,
-              });
-              continue;
-            }
-          } catch (subProjectError) {
-            console.error(
-              `Error fetching sub-projects for project ID ${projectId}:`,
-              subProjectError
-            );
-            failureCount++;
-            failedLogs.push({
-              date: worklogDate,
-              pep: pepValue,
-              reason: "API error while fetching sub-projects.",
-            });
-            continue;
-          }
-        }
-
-        const date = new Date(worklog.started);
-        const formattedDate = `${String(date.getDate()).padStart(
-          2,
-          "0"
-        )}/${String(date.getMonth() + 1).padStart(
-          2,
-          "0"
-        )}/${date.getFullYear()}`;
-
-        const totalMinutes = Math.floor(worklog.timeSpentSeconds / 60);
-        const hours = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-        const minutes = String(totalMinutes % 60).padStart(2, "0");
-        const formattedHours = `${hours}:${minutes}`;
-
-        const payload = {
-          id: "",
-          fromDate: formattedDate,
-          toDate: formattedDate,
-          userId: user.id,
-          projectId: projectId,
-          category: "PR",
-          subProjectId: subProjectId,
-          taskId: "", // ignored for now
-          description: worklog.comment,
-          internalRef: "",
-          situationId: "6", // location: in office
-          hours: formattedHours,
-        };
-
-        try {
-          statusDiv.textContent = `Syncing ${
-            index + 1
-          }/${total}... (Project: ${pepValue})`;
-          await postImputation(payload, token);
-          successCount++;
-        } catch (imputationError) {
-          console.error(imputationError);
-          failureCount++;
-          failedLogs.push({
-            date: worklogDate,
-            pep: pepValue,
-            reason: `Imputation API call failed: ${imputationError.message}`,
-          });
-        }
-      }
-
-      const summaryMessage = `Sync complete. Success: ${successCount}, Failed: ${failureCount}.`;
-
-      if (failedLogs.length > 0) {
-        let failureHtml =
-          '<div style="margin-top: 10px; font-style: normal; text-align: left;"><strong>Failed Syncs (Page Not Reloaded):</strong><ul style="padding-left: 20px; margin-top: 5px;">';
-        for (const log of failedLogs) {
-          const pep = log.pep.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-          const reason = log.reason.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-          failureHtml += `<li style="margin-bottom: 5px;"><strong>${log.date}</strong> (${pep}):<br>${reason}</li>`;
-        }
-        failureHtml += "</ul></div>";
-        statusDiv.innerHTML = summaryMessage + failureHtml;
-        console.warn("--- Failed Syncs ---", failedLogs);
-      } else {
-        statusDiv.textContent =
-          summaryMessage + " All worklogs synced. Reloading page...";
-        setTimeout(async () => {
-          const [tab] = await chrome.tabs.query({
-            active: true,
-            url: "https://intranetnew.seidor.com/rapports/imputation-hours*",
-          });
-          if (tab) {
-            chrome.tabs.reload(tab.id);
-          }
-        }, 500); // 0.5 second delay
-      }
-    } catch (error) {
-      console.error("Sync failed:", error);
-      statusDiv.textContent = `Error: ${error.message}`;
-    }
-  }
+  updateButtonStates(elements);
 });
