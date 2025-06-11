@@ -225,6 +225,8 @@ function customizeWorklogDetails(issue, originalComment) {
       } else if (rule.fallback) {
         if (rule.fallback.pep) finalPep = rule.fallback.pep;
       }
+      // example comment: [FA-20] something something
+      finalComment = `[${issue.key}] \n${finalComment}`;
       break; // Assume first matching rule is sufficient
     }
   }
