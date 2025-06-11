@@ -129,13 +129,12 @@ async function getBearerToken() {
 }
 
 const rapportApi = {
-  getUserData: (token) => {
+  getUserData: (token) =>
     fetchFromApi(
       CONFIG.URLS.RAPPORTS_API_BASE + CONFIG.API_ENDPOINTS.USER_PROFILE,
       {},
       token
-    );
-  },
+    ),
 
   getProjectsData: (token) =>
     fetchFromApi(
