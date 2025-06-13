@@ -13,6 +13,7 @@ const CONFIG = {
     USER_PROFILE: "/authorizationv2/user-profile",
     PROJECTS: "/authorizationv2/paginated-projects",
     SUB_PROJECTS: "/collections/paginated-subprojects",
+    TASKS: "/collections/paginated-tasks",
     IMPUTATIONS: "/rapports/imputations",
     JIRA_MYSELF: "/myself",
     JIRA_SEARCH: "/search",
@@ -157,6 +158,25 @@ const rapportApi = {
         method: "POST",
         body: JSON.stringify({
           filterMap: { projectId, isActive: "true" },
+          pagination: { pageNumber: 1, pageSize: 100000 },
+        }),
+      },
+      token
+    ),
+
+  getTasksData: (projectId, date, token) =>
+    fetchFromApi(
+      CONFIG.URLS.RAPPORTS_API_BASE + CONFIG.API_ENDPOINTS.TASKS,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          multiSortedColumns: [{ active: "label", direction: "asc" }],
+          filterMap: {
+            projectId,
+            fromDate: date,
+            toDate: date,
+            isActive: "true",
+          },
           pagination: { pageNumber: 1, pageSize: 100000 },
         }),
       },
@@ -466,6 +486,56 @@ function promptForSubProject(matches, keyword) {
   });
 }
 
+function promptForTask(matches, projectLabel) {
+  const { modal, choicesDiv, confirmBtn, cancelBtn, modalTitle } =
+    getElements();
+
+  modalTitle.textContent = `Select Task for Project "${projectLabel}"`;
+  choicesDiv.innerHTML = ""; // Clear previous choices
+
+  return new Promise((resolve, reject) => {
+    matches.forEach((match, index) => {
+      const radioId = `task-choice-${index}`;
+      const wrapper = document.createElement("div");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "taskChoice";
+      input.id = radioId;
+      input.value = match.value;
+      if (index === 0) input.checked = true;
+
+      const label = document.createElement("label");
+      label.htmlFor = radioId;
+      label.textContent = match.label;
+
+      wrapper.appendChild(input);
+      wrapper.appendChild(label);
+      choicesDiv.appendChild(wrapper);
+    });
+
+    const cleanup = (listener) => {
+      modal.style.display = "none";
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+    };
+
+    const onConfirm = () => {
+      cleanup();
+      const selected = choicesDiv.querySelector("input:checked");
+      resolve(selected.value);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      reject(new Error("User cancelled selection."));
+    };
+
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    modal.style.display = "flex";
+  });
+}
+
 function displaySyncSummary(successCount, failedLogs) {
   const failureCount = failedLogs.length;
   let summaryMessage = `Sync complete. Success: ${successCount}, Failed: ${failureCount}.`;
@@ -547,7 +617,7 @@ async function handleSyncWorklogs() {
 
     const projects = projectsResponse.data;
     const projectMap = projects.reduce((acc, proj) => {
-      acc[proj.label] = proj.value;
+      acc[proj.label] = proj;
       return acc;
     }, {});
 
@@ -583,17 +653,48 @@ async function handleSyncWorklogs() {
         [projectLabel, subProjectKeyword] = pepValue.split("&");
       }
 
-      const projectId = projectMap[projectLabel];
-      if (!projectId) {
+      const project = projectMap[projectLabel];
+      if (!project) {
         fail(`Project "${projectLabel}" not found in Rapports.`);
         continue;
       }
 
       let subProjectId = CONFIG.RAPPORTS_PAYLOAD.DEFAULT_TASK_ID;
-      if (subProjectKeyword) {
+      let taskId = CONFIG.RAPPORTS_PAYLOAD.DEFAULT_TASK_ID;
+
+      if (project.childrenType === "task") {
+        try {
+          const tasks = (
+            await rapportApi.getTasksData(
+              project.value,
+              formatters.date(new Date(worklog.started)),
+              token
+            )
+          ).data;
+
+          if (tasks.length === 1) {
+            taskId = tasks[0].value;
+          } else if (tasks.length > 1) {
+            updateStatus(
+              `Waiting for task selection for project: ${projectLabel}`
+            );
+            taskId = await promptForTask(tasks, projectLabel);
+          } else {
+            fail(`No tasks found for project "${projectLabel}" on this date.`);
+            continue;
+          }
+        } catch (error) {
+          fail(
+            error.message.includes("cancelled")
+              ? "Task selection cancelled."
+              : "API error fetching tasks."
+          );
+          continue;
+        }
+      } else if (subProjectKeyword) {
         try {
           const subProjects = (
-            await rapportApi.getSubProjectsData(projectId, token)
+            await rapportApi.getSubProjectsData(project.value, token)
           ).data;
           const matching = subProjects.filter((sp) =>
             sp.label.toUpperCase().includes(subProjectKeyword.toUpperCase())
@@ -629,13 +730,13 @@ async function handleSyncWorklogs() {
         fromDate: formatters.date(date),
         toDate: formatters.date(date),
         userId: user.id,
-        projectId,
+        projectId: project.value,
         subProjectId,
+        taskId,
         description: worklog.comment,
         hours: formatters.hours(worklog.timeSpentSeconds),
         category: CONFIG.RAPPORTS_PAYLOAD.CATEGORY,
         situationId: CONFIG.RAPPORTS_PAYLOAD.SITUATION_ID,
-        taskId: CONFIG.RAPPORTS_PAYLOAD.DEFAULT_TASK_ID,
         internalRef: CONFIG.RAPPORTS_PAYLOAD.INTERNAL_REF,
       };
 
