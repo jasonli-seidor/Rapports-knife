@@ -185,7 +185,9 @@ const jiraApi = {
   searchIssuesWithWorklogs: async (jql) => {
     const searchUrl = `${
       CONFIG.API_ENDPOINTS.JIRA_SEARCH
-    }?jql=${encodeURIComponent(jql)}&fields=${CONFIG.JIRA.PEP_CUSTOM_FIELD}`;
+    }?jql=${encodeURIComponent(jql)}&fields=${
+      CONFIG.JIRA.PEP_CUSTOM_FIELD
+    },summary`;
     const response = await jiraApi.fetch(searchUrl);
     if (!response.ok) throw new Error("Failed to search Jira issues.");
     const searchData = await response.json();
@@ -219,7 +221,10 @@ function customizeWorklogDetails(issue, originalComment) {
 
       if (conditionMet) {
         if (rule.result.pep) finalPep = rule.result.pep;
-        if (rule.result.comment && originalComment === "No comment") {
+        if (
+          rule.result.comment &&
+          originalComment.includes(issue.fields.summary)
+        ) {
           finalComment = rule.result.comment;
         }
       } else if (rule.fallback) {
@@ -253,7 +258,8 @@ async function getJiraWorklogs(startDate, endDate) {
       })
       .map((worklog) => {
         const commentText =
-          worklog.comment?.content?.[0]?.content?.[0]?.text || "No comment";
+          worklog.comment?.content?.[0]?.content?.[0]?.text ||
+          issue.fields.summary;
         const { pep, comment } = customizeWorklogDetails(issue, commentText);
         return {
           timeSpentSeconds: worklog.timeSpentSeconds,
