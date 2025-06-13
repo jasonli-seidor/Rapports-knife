@@ -258,6 +258,24 @@ function customizeWorklogDetails(issue, originalComment) {
   return { pep: finalPep, comment: finalComment };
 }
 
+// --- Task Mapping Functions ---
+
+async function getTaskMapping(issueKey) {
+  const { taskMappings = {} } = await chrome.storage.local.get("taskMappings");
+  return taskMappings[issueKey];
+}
+
+async function saveTaskMapping(issueKey, taskId) {
+  const { taskMappings = {} } = await chrome.storage.local.get("taskMappings");
+  taskMappings[issueKey] = taskId;
+  await chrome.storage.local.set({ taskMappings });
+}
+
+async function clearTaskMappings() {
+  await chrome.storage.local.remove("taskMappings");
+  updateStatus("Task cache cleared successfully.");
+}
+
 async function getJiraWorklogs(startDate, endDate) {
   const { accountId } = await jiraApi.getMyself();
   const jql = `worklogDate >= "${startDate}" AND worklogDate <= "${endDate}" AND worklogAuthor = currentUser()`;
@@ -286,6 +304,7 @@ async function getJiraWorklogs(startDate, endDate) {
           comment,
           started: worklog.started,
           pep,
+          issueKey: issue.key, // Add issue key to worklog object
         };
       });
   });
@@ -664,24 +683,34 @@ async function handleSyncWorklogs() {
 
       if (project.childrenType === "task") {
         try {
-          const tasks = (
-            await rapportApi.getTasksData(
-              project.value,
-              formatters.date(new Date(worklog.started)),
-              token
-            )
-          ).data;
-
-          if (tasks.length === 1) {
-            taskId = tasks[0].value;
-          } else if (tasks.length > 1) {
-            updateStatus(
-              `Waiting for task selection for project: ${projectLabel}`
-            );
-            taskId = await promptForTask(tasks, projectLabel);
+          // Check for cached task mapping first
+          const cachedTaskId = await getTaskMapping(worklog.issueKey);
+          if (cachedTaskId) {
+            taskId = cachedTaskId;
           } else {
-            fail(`No tasks found for project "${projectLabel}" on this date.`);
-            continue;
+            const tasks = (
+              await rapportApi.getTasksData(
+                project.value,
+                formatters.date(new Date(worklog.started)),
+                token
+              )
+            ).data;
+
+            if (tasks.length === 1) {
+              taskId = tasks[0].value;
+              await saveTaskMapping(worklog.issueKey, taskId);
+            } else if (tasks.length > 1) {
+              updateStatus(
+                `Waiting for task selection for project: ${projectLabel}`
+              );
+              taskId = await promptForTask(tasks, projectLabel);
+              await saveTaskMapping(worklog.issueKey, taskId);
+            } else {
+              fail(
+                `No tasks found for project "${projectLabel}" on this date.`
+              );
+              continue;
+            }
           }
         } catch (error) {
           fail(
@@ -805,6 +834,16 @@ document.addEventListener("DOMContentLoaded", () => {
     handleDevAction(rapportApi.getProjectsData, "Projects logged to console.")
   );
   syncWorklogsButton.addEventListener("click", handleSyncWorklogs);
+
+  // Add Clear Cache button handler
+  document.getElementById("clearCache").addEventListener("click", async () => {
+    try {
+      await clearTaskMappings();
+    } catch (error) {
+      console.error("Error clearing cache:", error);
+      updateStatus(`Error clearing cache: ${error.message}`);
+    }
+  });
 
   checkVersion();
   updateButtonStates(elements);
