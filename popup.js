@@ -7,6 +7,7 @@ const CONFIG = {
     RAPPORTS_API_BASE: "https://apis-intranet.seidor.com",
     JIRA_API_BASE: "https://seidorcc.atlassian.net/rest/api/3",
     SEIDOR_INTRANET: "https://intranetnew.seidor.com/*",
+    ZAP_JIRA_API_BASE: "https://zapnew.atlassian.net/rest/api/3",
   },
 
   API_ENDPOINTS: {
@@ -39,6 +40,9 @@ const CONFIG = {
           pep.value.length === 0,
         result: { pep: { value: "14-SEIDOR-AM&LEC" } },
       },
+      "ZMP-": {
+        result: { pep: { value: "14-ZAP-SOPRTE" } },
+      },
       "SA-17": {
         result: { pep: { value: "14-ZPR-VAC25" } },
       },
@@ -58,6 +62,10 @@ const CONFIG = {
       },
     },
   },
+};
+CONFIG.JIRA_ENVIRONMENTS = {
+  seidorcc: CONFIG.URLS.JIRA_API_BASE,
+  zap: CONFIG.URLS.ZAP_JIRA_API_BASE,
 };
 
 // --- DOM Elements ---
@@ -120,7 +128,12 @@ async function getBearerToken() {
   if (!results?.[0]?.result) {
     throw new Error("Could not retrieve 'appState' from session storage.");
   }
-  const appState = JSON.parse(results[0].result);
+  let appState;
+  try {
+    appState = JSON.parse(results[0].result);
+  } catch (e) {
+    throw new Error("Invalid appState format in session storage.");
+  }
   const token = appState?.tokenData?.accessToken;
 
   if (typeof token !== "string" || !token.startsWith("ey")) {
@@ -193,7 +206,9 @@ const rapportApi = {
 
 const jiraApi = {
   fetch: (endpoint, options = {}) => {
-    return fetch(CONFIG.URLS.JIRA_API_BASE + endpoint, options);
+    const selectedValue = document.getElementById("jira-options")?.value || "seidorcc";
+    const baseUrl = CONFIG.JIRA_ENVIRONMENTS[selectedValue] || CONFIG.URLS.JIRA_API_BASE;
+    return fetch(baseUrl + endpoint, options);
   },
 
   getMyself: async () => {
@@ -203,11 +218,9 @@ const jiraApi = {
   },
 
   searchIssuesWithWorklogs: async (jql) => {
-    const searchUrl = `${
-      CONFIG.API_ENDPOINTS.JIRA_SEARCH
-    }?jql=${encodeURIComponent(jql)}&fields=${
-      CONFIG.JIRA.PEP_CUSTOM_FIELD
-    },summary`;
+    const searchUrl = `${CONFIG.API_ENDPOINTS.JIRA_SEARCH
+      }?jql=${encodeURIComponent(jql)}&fields=${CONFIG.JIRA.PEP_CUSTOM_FIELD
+      },summary`;
     const response = await jiraApi.fetch(searchUrl);
     if (!response.ok) throw new Error("Failed to search Jira issues.");
     const searchData = await response.json();

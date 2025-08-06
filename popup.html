@@ -1,255 +1,306 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>Jira Worklog Reporter</title>
-    <style>
-      :root {
-        --color-bg-dark: #1f2937;
-        --color-bg-light: #37475a;
-        --color-text-primary: #f3f4f6;
-        --color-text-secondary: #e5e7eb;
-        --color-text-tertiary: #d1d5db;
-        --color-text-muted: #9ca3af;
-        --color-input-bg: #374151;
-        --color-border: #4b5563;
-        --color-primary: #3b82f6;
-        --color-primary-light: #60a5fa;
-        --color-success: #10b981;
-        --color-success-light: #34d399;
-        --color-secondary: #6b7280;
-        --color-warning: #facc15;
-        --color-info: #7dd3fc;
-        --color-overlay-bg: rgba(0, 0, 0, 0.7);
-        --color-translucent-bg: rgba(255, 255, 255, 0.05);
 
-        --shadow-sm: 0 4px 8px rgba(0, 0, 0, 0.2);
-        --shadow-md: 0 5px 15px rgba(0, 0, 0, 0.5);
-      }
+<head>
+  <meta charset="UTF-8" />
+  <title>Jira Worklog Reporter</title>
+  <style>
+    :root {
+      --color-bg-dark: #1f2937;
+      --color-bg-light: #37475a;
+      --color-text-primary: #f3f4f6;
+      --color-text-secondary: #e5e7eb;
+      --color-text-tertiary: #d1d5db;
+      --color-text-muted: #9ca3af;
+      --color-input-bg: #374151;
+      --color-border: #4b5563;
+      --color-primary: #3b82f6;
+      --color-primary-light: #60a5fa;
+      --color-success: #10b981;
+      --color-success-light: #34d399;
+      --color-secondary: #6b7280;
+      --color-warning: #facc15;
+      --color-info: #7dd3fc;
+      --color-overlay-bg: rgba(0, 0, 0, 0.7);
+      --color-translucent-bg: rgba(255, 255, 255, 0.05);
 
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          Helvetica, Arial, sans-serif;
-        width: 350px;
-        height: auto;
-        padding: 15px;
-        background: linear-gradient(
-          to bottom right,
+      --shadow-sm: 0 4px 8px rgba(0, 0, 0, 0.2);
+      --shadow-md: 0 5px 15px rgba(0, 0, 0, 0.5);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+      width: 350px;
+      height: auto;
+      padding: 15px;
+      background: linear-gradient(to bottom right,
           var(--color-bg-dark),
-          var(--color-bg-light)
-        );
-        color: var(--color-text-primary);
-        box-sizing: border-box;
-        font-size: 0.9em;
-      }
-      h3 {
-        text-align: center;
-        margin-top: 0;
-        margin-bottom: 15px;
-        color: var(--color-text-secondary);
-        font-weight: 500;
-      }
-      .date-range {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 15px;
-        gap: 10px;
-      }
-      .date-input {
-        display: flex;
-        flex-direction: column;
-        flex: 1;
-      }
-      label {
-        margin-bottom: 5px;
-        font-size: 0.85em;
-        color: var(--color-text-tertiary);
-      }
-      input[type="date"] {
-        background-color: var(--color-input-bg);
-        color: var(--color-text-primary);
-        border: 1px solid var(--color-border);
-        padding: 8px;
-        border-radius: 4px;
-        font-family: inherit;
-        color-scheme: dark;
-      }
-      button {
-        width: 100%;
-        padding: 10px;
-        cursor: pointer;
-        border: none;
-        border-radius: 5px;
-        font-weight: bold;
-        color: white;
-        background: linear-gradient(
-          to right,
+          var(--color-bg-light));
+      color: var(--color-text-primary);
+      box-sizing: border-box;
+      font-size: 0.9em;
+    }
+
+    h3 {
+      text-align: center;
+      margin-top: 0;
+      margin-bottom: 15px;
+      color: var(--color-text-secondary);
+      font-weight: 500;
+    }
+
+    .date-range {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 15px;
+      gap: 10px;
+    }
+
+    .date-input {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    label {
+      margin-bottom: 5px;
+      font-size: 0.85em;
+      color: var(--color-text-tertiary);
+    }
+
+    input[type="date"] {
+      background-color: var(--color-input-bg);
+      color: var(--color-text-primary);
+      border: 1px solid var(--color-border);
+      padding: 8px;
+      border-radius: 4px;
+      font-family: inherit;
+      color-scheme: dark;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      cursor: pointer;
+      border: none;
+      border-radius: 5px;
+      font-weight: bold;
+      color: white;
+      background: linear-gradient(to right,
           var(--color-primary),
-          var(--color-primary-light)
-        );
-        transition: all 0.2s ease-in-out;
-        margin-top: 10px;
-      }
-      button:hover {
-        opacity: 0.9;
-        transform: translateY(-1px);
-        box-shadow: var(--shadow-sm);
-      }
-      button:active {
-        transform: translateY(0);
-        box-shadow: none;
-      }
-      button:disabled {
-        background: var(--color-border);
-        cursor: not-allowed;
-        opacity: 0.6;
-        transform: none;
-        box-shadow: none;
-      }
-      #status {
-        margin-top: 15px;
-        font-style: italic;
-        color: var(--color-text-muted);
-        word-wrap: break-word;
-        text-align: center;
-      }
+          var(--color-primary-light));
+      transition: all 0.2s ease-in-out;
+      margin-top: 10px;
+    }
 
-      /* Dev Tools Toggle */
-      .dev-tools-toggle {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 15px;
-        background: var(--color-translucent-bg);
-        padding: 8px;
-        border-radius: 4px;
-      }
+    button:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-sm);
+    }
 
-      /* Modal Styling */
-      .modal-overlay {
-        position: fixed; /* Use fixed to cover the whole viewport */
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: var(--color-overlay-bg);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 1000;
-      }
-      .modal-content {
-        background: var(--color-bg-dark);
-        padding: 20px;
-        border-radius: 8px;
-        width: 95%;
-        text-align: left;
-        border: 1px solid var(--color-border);
-        box-shadow: var(--shadow-md);
-      }
-      .modal-content h4 {
-        margin-top: 0;
-        color: var(--color-text-secondary);
-        border-bottom: 1px solid var(--color-border);
-        padding-bottom: 10px;
-        margin-bottom: 15px;
-      }
-      .modal-actions {
-        margin-top: 20px;
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-      }
-      #subProjectChoices div {
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-      }
-      #subProjectChoices label {
-        margin-left: 8px;
-        color: var(--color-text-tertiary);
-        cursor: pointer;
-      }
-      #subProjectChoices input[type="radio"] {
-        accent-color: var(--color-primary); /* Style the radio button itself */
-      }
-      #confirmSubProject {
-        background: linear-gradient(
-          to right,
+    button:active {
+      transform: translateY(0);
+      box-shadow: none;
+    }
+
+    button:disabled {
+      background: var(--color-border);
+      cursor: not-allowed;
+      opacity: 0.6;
+      transform: none;
+      box-shadow: none;
+    }
+
+    #status {
+      margin-top: 15px;
+      font-style: italic;
+      color: var(--color-text-muted);
+      word-wrap: break-word;
+      text-align: center;
+    }
+
+    /* Dev Tools Toggle */
+    .dev-tools-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 15px;
+      background: var(--color-translucent-bg);
+      padding: 8px;
+      border-radius: 4px;
+    }
+
+    /* Modal Styling */
+    .modal-overlay {
+      position: fixed;
+      /* Use fixed to cover the whole viewport */
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--color-overlay-bg);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: var(--color-bg-dark);
+      padding: 20px;
+      border-radius: 8px;
+      width: 95%;
+      text-align: left;
+      border: 1px solid var(--color-border);
+      box-shadow: var(--shadow-md);
+    }
+
+    .modal-content h4 {
+      margin-top: 0;
+      color: var(--color-text-secondary);
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+
+    .modal-actions {
+      margin-top: 20px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    #subProjectChoices div {
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+    }
+
+    #subProjectChoices label {
+      margin-left: 8px;
+      color: var(--color-text-tertiary);
+      cursor: pointer;
+    }
+
+    #subProjectChoices input[type="radio"] {
+      accent-color: var(--color-primary);
+      /* Style the radio button itself */
+    }
+
+    #confirmSubProject {
+      background: linear-gradient(to right,
           var(--color-success),
-          var(--color-success-light)
-        );
-      }
-      #cancelSubProject {
-        background: linear-gradient(
-          to right,
+          var(--color-success-light));
+    }
+
+    #cancelSubProject {
+      background: linear-gradient(to right,
           var(--color-secondary),
-          var(--color-text-muted)
-        );
-      }
-      #syncHint {
-        margin-bottom: 10px;
-        color: var(--color-warning); /* A warning yellow color */
-        text-align: center;
-      }
-      #syncHint a {
-        color: var(--color-info);
-        text-decoration: underline;
-      }
-    </style>
-  </head>
-  <body>
-    <h3>Rapports🔪</h3>
-    <div class="date-range">
-      <div class="date-input">
-        <label for="startDate">Start Date:</label>
-        <input type="date" id="startDate" />
-      </div>
-      <div class="date-input">
-        <label for="endDate">End Date:</label>
-        <input type="date" id="endDate" />
-      </div>
-    </div>
+          var(--color-text-muted));
+    }
 
-    <div class="dev-tools-toggle">
-      <label for="devToolsToggle">Show Dev Tools</label>
-      <input type="checkbox" id="devToolsToggle" />
-    </div>
+    #syncHint {
+      margin-bottom: 10px;
+      color: var(--color-warning);
+      /* A warning yellow color */
+      text-align: center;
+    }
 
-    <div id="devTools" style="display: none">
-      <button id="getWorklogs">Get Worklogs</button>
-      <button id="getUserProfile">Get User Profile</button>
-      <button id="getProjects">Get Projects</button>
-      <button
-        id="clearCache"
-        style="
+    #syncHint a {
+      color: var(--color-info);
+      text-decoration: underline;
+    }
+
+    select.jira-options {
+      background-color: var(--color-input-bg);
+      color: var(--color-text-primary);
+      border: 1px solid var(--color-border);
+      padding: 8px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9em;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='gray' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1.5 5.5l6 6 6-6z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.75rem center;
+      background-size: 1em;
+      padding-right: 2em;
+      color-scheme: dark;
+    }
+
+    select.jira-options:hover {
+      border-color: var(--color-primary-light);
+    }
+
+    select.jira-options:focus {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+      /* subtle focus ring */
+    }
+  </style>
+</head>
+
+<body>
+  <h3>Rapports🔪</h3>
+  <div class="choose-jira-options">
+    <div>
+      <label>Choose Jira : </label>
+      <select class="jira-options" id="jira-options">
+        <option value="seidorcc">SeidorCC</option>
+        <option value="zap">ZAP</option>
+      </select>
+    </div>
+  </div>
+  <div class="date-range">
+    <div class="date-input">
+      <label for="startDate">Start Date:</label>
+      <input type="date" id="startDate" />
+    </div>
+    <div class="date-input">
+      <label for="endDate">End Date:</label>
+      <input type="date" id="endDate" />
+    </div>
+  </div>
+
+  <div class="dev-tools-toggle">
+    <label for="devToolsToggle">Show Dev Tools</label>
+    <input type="checkbox" id="devToolsToggle" />
+  </div>
+
+  <div id="devTools" style="display: none">
+    <button id="getWorklogs">Get Worklogs</button>
+    <button id="getUserProfile">Get User Profile</button>
+    <button id="getProjects">Get Projects</button>
+    <button id="clearCache" style="
           background: linear-gradient(to right, var(--color-warning), #fbbf24);
-        "
-      >
-        Clear Task Cache
-      </button>
-    </div>
-    <div id="syncHint"></div>
-    <button id="syncWorklogs" style="font-weight: bold">
-      Sync to Rapports
+        ">
+      Clear Task Cache
     </button>
-    <div id="status"></div>
+  </div>
+  <div id="syncHint"></div>
+  <button id="syncWorklogs" style="font-weight: bold">
+    Sync to Rapports
+  </button>
+  <div id="status"></div>
 
-    <div id="subProjectModal" class="modal-overlay" style="display: none">
-      <div class="modal-content">
-        <h4 id="modalTitle">Select Item</h4>
-        <p id="modalMessage">Multiple items match. Please choose one:</p>
-        <div
-          id="subProjectChoices"
-          style="max-height: 120px; overflow-y: auto"
-        ></div>
-        <div class="modal-actions">
-          <button id="confirmSubProject">Confirm</button>
-          <button id="cancelSubProject">Cancel</button>
-        </div>
+  <div id="subProjectModal" class="modal-overlay" style="display: none">
+    <div class="modal-content">
+      <h4 id="modalTitle">Select Item</h4>
+      <p id="modalMessage">Multiple items match. Please choose one:</p>
+      <div id="subProjectChoices" style="max-height: 120px; overflow-y: auto"></div>
+      <div class="modal-actions">
+        <button id="confirmSubProject">Confirm</button>
+        <button id="cancelSubProject">Cancel</button>
       </div>
     </div>
+  </div>
 
-    <script src="popup.js"></script>
-  </body>
+  <script src="popup.js"></script>
+</body>
+
 </html>
